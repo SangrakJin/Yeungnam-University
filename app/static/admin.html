@@ -1,0 +1,159 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>관리자 대시보드</title>
+<style>
+body{font-family:Arial;margin:20px;background:#f6f7fb}
+.card{background:#fff;padding:16px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+.row{display:flex;gap:10px;align-items:center;margin-bottom:10px}
+table{width:100%;border-collapse:collapse}
+th,td{border-bottom:1px solid #eee;padding:8px;text-align:left}
+button{padding:6px 12px;border:0;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
+button:hover{opacity:.9}
+.muted{color:#777}
+</style>
+</head>
+<body>
+
+<h2>관리자 대시보드</h2>
+
+<div class="card">
+  <div class="row">
+    <input id="adminKey" placeholder="ADMIN KEY 입력" style="width:320px"/>
+    <button id="loadBtn">대시보드 불러오기</button>
+    <button id="exportBtn" style="background:#0b5">CSV 다운로드</button>
+    <span id="windowText" class="muted"></span>
+  </div>
+  <div id="msg" class="muted"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <input id="studentNo" placeholder="학번 입력"/>
+    <select id="profSelect"></select>
+    <button id="assignBtn">수동 배정</button>
+    <button id="addSeatBtn">좌석 +1</button>
+  </div>
+</div>
+
+<div class="card">
+  <h4>교수 현황</h4>
+  <table>
+    <thead>
+      <tr>
+        <th>교수</th>
+        <th>학생선택</th>
+        <th>총배정</th>
+        <th>총정원</th>
+      </tr>
+    </thead>
+    <tbody id="profTable"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h4>학생 배정 결과</h4>
+  <table>
+    <thead>
+      <tr>
+        <th>학번</th>
+        <th>이름</th>
+        <th>교수</th>
+        <th>방식</th>
+        <th>상태</th>
+      </tr>
+    </thead>
+    <tbody id="rosterTable"></tbody>
+  </table>
+</div>
+
+<script>
+function el(id){ return document.getElementById(id); }
+
+function setMsg(t){ el("msg").innerText=t||""; }
+
+function headers(){
+  return {"X-Admin-Key": el("adminKey").value.trim()};
+}
+
+async function loadDashboard(){
+  setMsg("불러오는 중...");
+  const r=await fetch("/admin/dashboard",{headers:headers()});
+  const d=await r.json();
+  if(!r.ok){setMsg(d.detail);return;}
+
+  el("windowText").innerText=`신청기간: ${d.window.start_at_kst} ~ ${d.window.end_at_kst}`;
+
+  const sel=el("profSelect"); sel.innerHTML="";
+  d.professors.forEach(p=>{
+    const o=document.createElement("option");
+    o.value=p.professor_id;
+    o.textContent=p.professor_name;
+    sel.appendChild(o);
+  });
+
+  const tb=el("profTable"); tb.innerHTML="";
+  d.professors.forEach(p=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${p.professor_name}</td><td>${p.student_count}</td><td>${p.total_count}</td><td>${p.total_capacity}</td>`;
+    tb.appendChild(tr);
+  });
+
+  await loadRoster();
+  setMsg("완료");
+}
+
+async function loadRoster(){
+  const r=await fetch("/admin/roster",{headers:headers()});
+  const d=await r.json();
+  if(!r.ok){setMsg(d.detail);return;}
+
+  const tb=el("rosterTable"); tb.innerHTML="";
+  d.items.forEach(x=>{
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${x.student_no}</td><td>${x.name}</td><td>${x.professor_name||"-"}</td><td>${x.method||"-"}</td><td>${x.status}</td>`;
+    tb.appendChild(tr);
+  });
+}
+
+async function exportCsv(){
+  const r=await fetch("/admin/export.csv",{headers:headers()});
+  if(!r.ok){setMsg("CSV 실패");return;}
+  const blob=await r.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download="advisor_allocation.csv";
+  a.click();
+}
+
+async function assign(){
+  const r=await fetch("/admin/assign",{
+    method:"POST",
+    headers:{...headers(),"Content-Type":"application/json"},
+    body:JSON.stringify({student_no:el("studentNo").value.trim(),professor_id:Number(el("profSelect").value)})
+  });
+  const d=await r.json();
+  if(!r.ok){setMsg(d.detail);return;}
+  await loadDashboard();
+}
+
+async function addSeat(){
+  const r=await fetch("/admin/add-seat",{
+    method:"POST",
+    headers:{...headers(),"Content-Type":"application/json"},
+    body:JSON.stringify({professor_id:Number(el("profSelect").value),count:1})
+  });
+  const d=await r.json();
+  if(!r.ok){setMsg(d.detail);return;}
+  await loadDashboard();
+}
+
+el("loadBtn").addEventListener("click",loadDashboard);
+el("exportBtn").addEventListener("click",exportCsv);
+el("assignBtn").addEventListener("click",assign);
+el("addSeatBtn").addEventListener("click",addSeat);
+</script>
+
+</body>
+</html>

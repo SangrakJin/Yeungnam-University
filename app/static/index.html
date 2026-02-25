@@ -1,0 +1,231 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>지도교수 선택</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#f6f7fb}
+    .wrap{max-width:980px;margin:0 auto;padding:24px}
+    .card{background:#fff;border-radius:14px;padding:18px;box-shadow:0 8px 20px rgba(0,0,0,.06);margin-bottom:16px}
+    h1{margin:0 0 10px;font-size:22px}
+    .muted{color:#555}
+    input{padding:10px 12px;border:1px solid #ddd;border-radius:10px;font-size:14px;width:220px}
+    button{padding:10px 12px;border:0;border-radius:10px;background:#111;color:#fff;font-size:14px;cursor:pointer}
+    button:disabled{background:#aaa;cursor:not-allowed}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    @media(max-width:700px){.grid{grid-template-columns:1fr}}
+    .prof-name{font-weight:800;font-size:16px;margin-bottom:8px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:#f0f2f7;font-size:12px}
+    .danger{color:#b00020;font-weight:800}
+    .ok{color:#0a7a2f;font-weight:800}
+    .topline{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    .small{font-size:12px}
+    .hr{border:none;border-top:1px solid #eee;margin:14px 0}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1 id="title">2026년 1학기 바이오캡스톤디자인(생명공학과)</h1>
+    <div class="topline">
+      <div class="muted" id="windowText">신청기간 불러오는 중...</div>
+      <div class="muted small" id="nowText"></div>
+    </div>
+
+    <hr class="hr"/>
+
+    <div id="loginBlock">
+      <div class="row">
+        <label>
+          <div class="small muted">학번</div>
+          <input id="studentNo" placeholder="학번 입력"/>
+        </label>
+        <label>
+          <div class="small muted">이름</div>
+          <input id="studentName" placeholder="이름 입력"/>
+        </label>
+        <button id="enterBtn">입장</button>
+      </div>
+      <div class="muted small" id="loginMsg" style="margin-top:10px"></div>
+    </div>
+
+    <div id="meBlock" style="display:none">
+      <div class="row">
+        <div class="pill" id="meText"></div>
+        <button id="refreshBtn">새로고침</button>
+        <button id="logoutBtn" style="background:#444">로그아웃</button>
+      </div>
+      <div id="selectMsg" style="margin-top:10px"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>
+        <div class="muted small">내 현재 선택</div>
+        <div id="mySelection" style="font-weight:900">-</div>
+      </div>
+      <div class="muted small" id="policyText"></div>
+    </div>
+  </div>
+
+  <div class="grid" id="profGrid"></div>
+</div>
+
+<script>
+  let token = localStorage.getItem("token") || "";
+
+  const el = (id)=>document.getElementById(id);
+
+  function authHeaders(){
+    return token ? { "Authorization": "Bearer " + token } : {};
+  }
+  function setMsg(html, kind){
+    el("selectMsg").innerHTML = html ? `<span class="${kind||'muted'}">${html}</span>` : "";
+  }
+
+  async function loadWindow(){
+    const r = await fetch("/window");
+    const w = await r.json();
+    el("windowText").textContent = `신청기간: ${w.start_at_kst} ~ ${w.end_at_kst}`;
+    el("nowText").textContent = `현재시간: ${w.now_kst} (KST)`;
+    el("policyText").textContent = w.is_open_now ? "기간 내: 선택/변경 가능" : "기간 외: 선택/변경 불가";
+    return w;
+  }
+
+  async function startSession(){
+    const student_no = el("studentNo").value.trim();
+    const name = el("studentName").value.trim();
+    if(!student_no || !name){
+      el("loginMsg").textContent = "학번과 이름을 입력하세요.";
+      return;
+    }
+    el("loginMsg").textContent = "확인 중...";
+    const r = await fetch("/session/start",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({student_no, name})
+    });
+    const data = await r.json().catch(()=>({}));
+    if(!r.ok){
+      el("loginMsg").textContent = data.detail || "입장 실패";
+      return;
+    }
+    token = data.token;
+    localStorage.setItem("token", token);
+    el("loginMsg").textContent = "";
+    await refreshAll();
+  }
+
+  async function loadProfessors(){
+    const r = await fetch("/professors", { headers: { ...authHeaders() }});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail || "교수 목록 조회 실패");
+    return d;
+  }
+
+  async function loadMySelection(){
+    const r = await fetch("/my-selection", { headers: { ...authHeaders() }});
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(d.detail || "내 선택 조회 실패");
+    return d;
+  }
+
+  async function doSelect(professor_id){
+    setMsg("처리 중...", "muted");
+    const r = await fetch("/select",{
+      method:"POST",
+      headers:{ "Content-Type":"application/json", ...authHeaders() },
+      body: JSON.stringify({ professor_id })
+    });
+    const d = await r.json().catch(()=>({}));
+    if(!r.ok){
+      const msg = (d && (d.detail || d.message)) ? (d.detail || d.message) : "선택 실패";
+      const debug = `선택 실패 (HTTP ${r.status}) : ${msg}<br/><span class="small muted">${JSON.stringify(d)}</span>`;
+      setMsg(debug, (String(msg).includes("정원마감") || r.status>=400) ? "danger" : "muted");
+      return;
+    }
+    setMsg(`선택 완료: ${d.professor_name}`, "ok");
+    await refreshAll();
+  }
+
+  function renderProfessors(payload){
+    el("title").textContent = payload.title || el("title").textContent;
+    const grid = el("profGrid");
+    grid.innerHTML = "";
+
+    payload.professors.forEach(p=>{
+      const card = document.createElement("div");
+      card.className = "card";
+      card.style.marginBottom = "0";
+
+      const disabled = p.is_full ? "disabled" : "";
+      const btnText = p.is_full ? "마감" : "선택하기";
+
+      card.innerHTML = `
+        <div class="prof-name">${p.name}</div>
+        <div class="row" style="justify-content:space-between">
+          <div class="pill">현재 ${p.student_count} / ${p.base_capacity}명</div>
+          <div class="small muted">총정원(관리자 포함): ${p.total_count} / ${p.total_capacity}</div>
+        </div>
+        <div style="margin-top:10px">
+          ${p.is_full ? `<div class="danger">해당 교수님 정원마감</div>` : `<div class="small muted">선착순 선택</div>`}
+        </div>
+        <div style="margin-top:12px" class="row">
+          <button ${disabled} data-id="${p.id}">${btnText}</button>
+        </div>
+      `;
+      card.querySelector("button").addEventListener("click", ()=>doSelect(p.id));
+      grid.appendChild(card);
+    });
+  }
+
+  function showLoggedIn(me){
+    el("loginBlock").style.display = "none";
+    el("meBlock").style.display = "block";
+    el("meText").textContent = `학번: ${me.student_no} / 이름: ${me.name}`;
+  }
+  function showLoggedOut(){
+    el("loginBlock").style.display = "block";
+    el("meBlock").style.display = "none";
+    el("mySelection").textContent = "-";
+    el("profGrid").innerHTML = "";
+    setMsg("", "muted");
+  }
+
+  async function refreshAll(){
+    await loadWindow();
+
+    if(!token){
+      showLoggedOut();
+      return;
+    }
+    try{
+      const me = await loadMySelection();
+      showLoggedIn(me);
+      el("mySelection").textContent = me.professor_name ? `${me.professor_name} (${me.method})` : "미선택";
+
+      const profs = await loadProfessors();
+      renderProfessors(profs);
+    }catch(e){
+      localStorage.removeItem("token");
+      token = "";
+      showLoggedOut();
+      el("loginMsg").textContent = e.message || "세션이 만료되었습니다. 다시 입장해주세요.";
+    }
+  }
+
+  el("enterBtn").addEventListener("click", startSession);
+  el("refreshBtn").addEventListener("click", refreshAll);
+  el("logoutBtn").addEventListener("click", ()=>{
+    localStorage.removeItem("token");
+    token = "";
+    showLoggedOut();
+  });
+
+  refreshAll();
+</script>
+</body>
+</html>
