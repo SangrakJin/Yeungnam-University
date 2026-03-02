@@ -15,10 +15,16 @@ def seed_if_needed(db: Session):
         for name in PROFESSORS:
             db.add(Professor(name=name, base_capacity=12, extra_capacity=0, active=True))
 
+    # ✅ 신청기간은 항상 원하는 값으로 맞춘다 (기존 값이 있어도 업데이트)
+    start_utc = kst_str_to_utc("2026-03-07 09:00")
+    end_utc = kst_str_to_utc("2026-03-08 18:00")
+
     win = db.query(ApplicationWindow).first()
     if not win:
-        start_utc = kst_str_to_utc("2026-02-25 20:15")
-        end_utc = kst_str_to_utc("2026-03-13 18:00")
         db.add(ApplicationWindow(start_at=start_utc, end_at=end_utc, is_enabled=True))
+    else:
+        win.start_at = start_utc
+        win.end_at = end_utc
+        win.is_enabled = True
 
     db.commit()
