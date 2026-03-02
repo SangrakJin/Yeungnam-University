@@ -34,6 +34,8 @@ button:hover{opacity:.9}
     <select id="profSelect"></select>
     <button id="assignBtn">수동 배정</button>
     <button id="addSeatBtn">좌석 +1</button>
+    <button id="randomBtn" style="background:#b45309">미배정 학생 랜덤 배정</button>
+    <button id="resetRandomBtn" style="background:#b00020">랜덤 배정만 초기화</button>
   </div>
 </div>
 
@@ -138,6 +140,37 @@ async function assign(){
   await loadDashboard();
 }
 
+async function assignRandom(){
+  if(!confirm("미배정 학생들을 랜덤으로 자동 배정할까요?")) return;
+
+  setMsg("랜덤 배정 중...");
+  const r = await fetch("/admin/assign-random", {
+    method: "POST",
+    headers: headers()
+  });
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ setMsg(d.detail || "랜덤 배정 실패"); return; }
+
+  setMsg(`완료: 배정 ${d.assigned}명 / 스킵 ${d.skipped}명`);
+  await loadDashboard();
+}
+
+async function resetRandom(){
+  const ok = confirm("랜덤 배정된 학생만 초기화할까요?");
+  if(!ok) return;
+
+  setMsg("랜덤 배정 초기화 중...");
+  const r = await fetch("/admin/reset-random", {
+    method: "POST",
+    headers: headers()
+  });
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){ setMsg(d.detail || "초기화 실패"); return; }
+
+  setMsg(`완료: 랜덤 배정 ${d.deleted}건 삭제`);
+  await loadDashboard();
+}
+
 async function addSeat(){
   const r=await fetch("/admin/add-seat",{
     method:"POST",
@@ -153,6 +186,8 @@ el("loadBtn").addEventListener("click",loadDashboard);
 el("exportBtn").addEventListener("click",exportCsv);
 el("assignBtn").addEventListener("click",assign);
 el("addSeatBtn").addEventListener("click",addSeat);
+el("randomBtn").addEventListener("click", assignRandom);
+el("resetRandomBtn").addEventListener("click", resetRandom);
 </script>
 
 </body>

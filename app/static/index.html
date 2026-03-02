@@ -55,6 +55,7 @@
       <div class="row">
         <div class="pill" id="meText"></div>
         <button id="refreshBtn">새로고침</button>
+        <button id="resetBtn" style="background:#8b0000">선택 초기화</button>
         <button id="logoutBtn" style="background:#444">로그아웃</button>
       </div>
       <div id="selectMsg" style="margin-top:10px"></div>
@@ -133,7 +134,60 @@
     return d;
   }
 
-  async function doSelect(professor_id){
+  // ✅ 내 선택 초기화 (추가)
+  async function resetMySelection(){
+    const currentText = (el("mySelection").textContent || "").trim();
+    const hasCurrent = currentText !== "-" && currentText !== "" && currentText !== "미선택";
+
+    if(!hasCurrent){
+      alert("현재 선택된 교수님이 없습니다.");
+      return;
+    }
+
+    const ok = confirm("내 선택을 초기화(삭제)할까요?\n초기화 후에는 다시 선택해야 합니다.");
+    if(!ok) return;
+
+    setMsg("초기화 중...", "muted");
+
+    const r = await fetch("/my-selection",{
+      method:"DELETE",
+      headers:{ ...authHeaders() }
+    });
+
+    const d = await r.json().catch(()=>({}));
+
+    if(!r.ok){
+      const msg = (d && (d.detail || d.message)) ? (d.detail || d.message) : "초기화 실패";
+      setMsg(`초기화 실패 (HTTP ${r.status}) : ${msg}`, "danger");
+      return;
+    }
+
+    alert("초기화 완료");
+    setMsg("초기화 완료", "ok");
+    await refreshAll();
+  }
+
+  // ✅ 교수 선택/변경: 확인창 포함
+  async function doSelect(professor_id, professor_name){
+    // 화면에 표시된 현재 선택으로 판단
+    const currentText = (el("mySelection").textContent || "").trim();
+    const hasCurrent = currentText !== "-" && currentText !== "" && currentText !== "미선택";
+    const currentName = hasCurrent ? currentText.split(" (")[0] : null;
+
+    // 확인창
+    if(!hasCurrent){
+      const ok = confirm(`${professor_name}을(를) 선택하셨습니다.\n계속 진행할까요?`);
+      if(!ok) return;
+    }else{
+      if(currentName === professor_name){
+        alert(`이미 ${professor_name}을(를) 선택하셨습니다.`);
+        return;
+      }
+      const ok = confirm(`${professor_name}으로 변경하시겠습니까?\n(현재 선택: ${currentName})`);
+      if(!ok) return;
+    }
+
+    // 실제 선택 요청
     setMsg("처리 중...", "muted");
     const r = await fetch("/select",{
       method:"POST",
@@ -141,12 +195,15 @@
       body: JSON.stringify({ professor_id })
     });
     const d = await r.json().catch(()=>({}));
+
     if(!r.ok){
       const msg = (d && (d.detail || d.message)) ? (d.detail || d.message) : "선택 실패";
       const debug = `선택 실패 (HTTP ${r.status}) : ${msg}<br/><span class="small muted">${JSON.stringify(d)}</span>`;
       setMsg(debug, (String(msg).includes("정원마감") || r.status>=400) ? "danger" : "muted");
       return;
     }
+
+    alert(`${d.professor_name}을(를) 선택했습니다.`);
     setMsg(`선택 완료: ${d.professor_name}`, "ok");
     await refreshAll();
   }
@@ -177,7 +234,9 @@
           <button ${disabled} data-id="${p.id}">${btnText}</button>
         </div>
       `;
-      card.querySelector("button").addEventListener("click", ()=>doSelect(p.id));
+
+      // ✅ 교수 선택 버튼 클릭 -> 확인창 포함 doSelect 호출
+      card.querySelector("button").addEventListener("click", ()=>doSelect(p.id, p.name));
       grid.appendChild(card);
     });
   }
@@ -219,6 +278,14 @@
 
   el("enterBtn").addEventListener("click", startSession);
   el("refreshBtn").addEventListener("click", refreshAll);
+
+  // ✅ (추가) 선택 초기화 버튼 이벤트
+  // HTML에 <button id="resetBtn">선택 초기화</button> 가 있어야 함
+  const resetBtn = el("resetBtn");
+  if(resetBtn){
+    resetBtn.addEventListener("click", resetMySelection);
+  }
+
   el("logoutBtn").addEventListener("click", ()=>{
     localStorage.removeItem("token");
     token = "";

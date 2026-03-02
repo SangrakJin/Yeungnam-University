@@ -8,6 +8,7 @@ from starlette.responses import StreamingResponse
 import io
 import csv
 import os
+import random
 
 # SQLAlchemy
 from sqlalchemy.orm import Session
@@ -156,6 +157,20 @@ def my_selection(db: Session = Depends(get_db), authorization: str | None = Head
         method=sel.method,
     )
 
+# ✅✅✅ [추가] 내 선택 초기화(삭제) 엔드포인트: DELETE /my-selection
+@app.delete("/my-selection")
+def reset_my_selection(db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
+    user = get_session_user(db, authorization)
+
+    sel = db.query(Selection).filter(Selection.user_id == user.id).first()
+    if not sel:
+        # 이미 비어있으면 그냥 OK
+        return {"ok": True, "deleted": False}
+
+    db.delete(sel)
+    db.commit()
+    return {"ok": True, "deleted": True}
+
 @app.post("/select", response_model=MySelectionRes)
 def select_professor(payload: SelectReq, db: Session = Depends(get_db), authorization: str | None = Header(default=None)):
     user = get_session_user(db, authorization)
@@ -298,13 +313,103 @@ def admin_assign(payload: AdminAssignReq, db: Session = Depends(get_db), x_admin
 
     return {"ok": True, "student_no": payload.student_no, "professor_id": payload.professor_id}
 
+@app.post("/admin/assign-random")
+def admin_assign_random(db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):
+    if not require_admin_key(x_admin_key):
+        raise HTTPException(status_code=401, detail="admin key invalid")
+
+    # 1) 교수 목록 + 현재 배정 수/정원 계산
+    professors = db.query(Professor).filter(Professor.active == True).order_by(Professor.id.asc()).all()
+    if not professors:
+        raise HTTPException(status_code=400, detail="활성 교수 목록이 없습니다")
+
+    total_counts = dict(
+        db.query(Selection.professor_id, func.count(Selection.id))
+          .group_by(Selection.professor_id)
+          .all()
+    )
+
+    remaining = {}
+    for p in professors:
+        total_capacity = int(p.base_capacity + p.extra_capacity)
+        used = int(total_counts.get(p.id, 0))
+        remaining[p.id] = max(0, total_capacity - used)
+
+    # 배정 가능한 좌석이 하나도 없으면 종료
+    if sum(remaining.values()) <= 0:
+        return {"ok": True, "assigned": 0, "skipped": 0, "detail": "배정 가능한 좌석이 없습니다."}
+
+    # 2) 미배정 학생(allowed_students 기준, 선택 없는 학생) 목록 만들기
+    # AllowedStudent -> User(없을 수도) -> Selection(없어야 미배정)
+    rows = (
+        db.query(AllowedStudent.student_no, AllowedStudent.name, User.id.label("user_id"))
+        .outerjoin(User, User.student_no == AllowedStudent.student_no)
+        .outerjoin(Selection, Selection.user_id == User.id)
+        .filter(Selection.id == None)   # Selection이 없으면 미배정
+        .all()
+    )
+
+    if not rows:
+        return {"ok": True, "assigned": 0, "skipped": 0, "detail": "미배정 학생이 없습니다."}
+
+    # 랜덤성을 위해 학생 순서 섞기
+    rows = list(rows)
+    random.shuffle(rows)
+
+    assigned = 0
+    skipped = 0
+
+    # 3) 한 명씩 랜덤 교수 배정 (남은 좌석이 있는 교수 중 랜덤)
+    for student_no, name, user_id in rows:
+        # 좌석이 남은 교수들만 후보
+        candidates = [pid for pid, rem in remaining.items() if rem > 0]
+        if not candidates:
+            skipped += 1
+            continue
+
+        professor_id = random.choice(candidates)
+
+        # user가 없으면 생성
+        if not user_id:
+            user = User(student_no=student_no, name=name)
+            db.add(user)
+            db.flush()  # user.id 확보
+            user_id = user.id
+
+        # selection이 없다는 조건으로 뽑았지만, 안전하게 다시 체크
+        sel = db.query(Selection).filter(Selection.user_id == user_id).first()
+        if sel:
+            skipped += 1
+            continue
+
+        db.add(Selection(user_id=user_id, professor_id=professor_id, method="random"))
+        remaining[professor_id] -= 1
+        assigned += 1
+
+    db.commit()
+
+    return {"ok": True, "assigned": assigned, "skipped": skipped}
+
+@app.post("/admin/reset-random")
+def admin_reset_random(db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):
+    if not require_admin_key(x_admin_key):
+        raise HTTPException(status_code=401, detail="admin key invalid")
+
+    # method가 random인 배정만 삭제
+    deleted = (
+        db.query(Selection)
+        .filter(Selection.method == "random")
+        .delete()
+    )
+
+    db.commit()
+    return {"ok": True, "deleted": int(deleted)}
+
 @app.get("/admin/roster")
 def admin_roster(db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):
     if not require_admin_key(x_admin_key):
         raise HTTPException(status_code=401, detail="admin key invalid")
 
-    # ✅ allowed_students(62명 전체)를 기준으로 결과를 만든다
-    # AllowedStudent -> (User 매칭) -> (Selection) -> (Professor)
     rows = (
         db.query(
             AllowedStudent.student_no,
@@ -330,7 +435,6 @@ def admin_roster(db: Session = Depends(get_db), x_admin_key: str | None = Header
         })
     return {"count": len(result), "items": result}
 
-
 @app.get("/admin/export.csv")
 def admin_export_csv(db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):
     if not require_admin_key(x_admin_key):
@@ -350,7 +454,6 @@ def admin_export_csv(db: Session = Depends(get_db), x_admin_key: str | None = He
         .all()
     )
 
-    # Excel 호환 위해 UTF-8-SIG(BOM) 권장
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["student_no", "name", "professor_name", "method", "status"])
@@ -361,7 +464,6 @@ def admin_export_csv(db: Session = Depends(get_db), x_admin_key: str | None = He
     data = output.getvalue()
     output.close()
 
-    # BOM 붙여서 Excel에서 한글 깨짐 방지
     bom = "\ufeff"
     csv_bytes = (bom + data).encode("utf-8")
 
@@ -370,4 +472,3 @@ def admin_export_csv(db: Session = Depends(get_db), x_admin_key: str | None = He
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": "attachment; filename=advisor_allocation_2026-1.csv"},
     )
-
