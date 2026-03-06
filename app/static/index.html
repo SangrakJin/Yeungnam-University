@@ -224,8 +224,7 @@
       card.innerHTML = `
         <div class="prof-name">${p.name}</div>
         <div class="row" style="justify-content:space-between">
-          <div class="pill">현재 ${p.student_count} / ${p.base_capacity}명</div>
-          <div class="small muted">총정원(관리자 포함): ${p.total_count} / ${p.total_capacity}</div>
+          <div class="pill">현재 ${p.total_count} / ${p.total_capacity}명</div>
         </div>
         <div style="margin-top:10px">
           ${p.is_full ? `<div class="danger">해당 교수님 정원마감</div>` : `<div class="small muted">선착순 선택</div>`}

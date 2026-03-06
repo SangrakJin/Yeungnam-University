@@ -130,7 +130,7 @@ def list_professors(db: Session = Depends(get_db), authorization: str | None = H
     for p in professors:
         sc = int(student_counts.get(p.id, 0))
         tc = int(total_counts.get(p.id, 0))
-        is_full = sc >= p.base_capacity
+        is_full = sc >= (p.base_capacity + p.extra_capacity)
         cards.append(ProfessorCard(
             id=p.id,
             name=p.name,
@@ -199,7 +199,7 @@ def select_professor(payload: SelectReq, db: Session = Depends(get_db), authoriz
         q = q.filter(Selection.user_id != user.id)
     student_count = int(q.scalar() or 0)
 
-    if student_count >= target.base_capacity:
+    if student_count >= (target.base_capacity + target.extra_capacity):
         raise HTTPException(status_code=409, detail="해당 교수님 정원마감")
 
     if not current:
@@ -277,6 +277,50 @@ def admin_add_seat(payload: AdminAddSeatReq, db: Session = Depends(get_db), x_ad
         p.extra_capacity += int(payload.count)
 
     return {"ok": True, "professor_id": payload.professor_id, "extra_capacity": p.extra_capacity}
+
+@app.post("/admin/remove-seat")
+def admin_remove_seat(payload: AdminAddSeatReq, db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):
+    if not require_admin_key(x_admin_key):
+        raise HTTPException(status_code=401, detail="admin key invalid")
+
+    with db.begin():
+        p = db.execute(select(Professor).where(Professor.id == payload.professor_id).with_for_update()).scalar_one_or_none()
+        if not p:
+            raise HTTPException(status_code=404, detail="교수를 찾을 수 없습니다")
+
+        remove_count = int(payload.count)
+
+        if remove_count <= 0:
+            raise HTTPException(status_code=400, detail="감소 좌석 수는 1 이상이어야 합니다")
+
+        # extra_capacity보다 더 많이 뺄 수는 없음
+        if p.extra_capacity < remove_count:
+            raise HTTPException(status_code=409, detail="추가 좌석보다 더 많이 줄일 수 없습니다")
+
+        # 현재 총배정 인원보다 최종 정원이 작아지면 안 됨
+        total_count = int(
+            db.query(func.count(Selection.id))
+              .filter(Selection.professor_id == p.id)
+              .scalar() or 0
+        )
+        new_total_capacity = p.base_capacity + (p.extra_capacity - remove_count)
+
+        if new_total_capacity < total_count:
+            raise HTTPException(
+                status_code=409,
+                detail=f"현재 배정 인원({total_count}명)보다 정원을 작게 줄일 수 없습니다"
+            )
+
+        p.extra_capacity -= remove_count
+
+    return {
+        "ok": True,
+        "professor_id": payload.professor_id,
+        "extra_capacity": p.extra_capacity
+    }
+
+
+
 
 @app.post("/admin/assign")
 def admin_assign(payload: AdminAssignReq, db: Session = Depends(get_db), x_admin_key: str | None = Header(default=None)):

@@ -34,6 +34,7 @@ button:hover{opacity:.9}
     <select id="profSelect"></select>
     <button id="assignBtn">수동 배정</button>
     <button id="addSeatBtn">좌석 +1</button>
+    <button id="removeSeatBtn" style="background:#b00020">좌석 -1</button>
     <button id="randomBtn" style="background:#b45309">미배정 학생 랜덤 배정</button>
     <button id="resetRandomBtn" style="background:#b00020">랜덤 배정만 초기화</button>
   </div>
@@ -182,10 +183,22 @@ async function addSeat(){
   await loadDashboard();
 }
 
+async function removeSeat(){
+  const r = await fetch("/admin/remove-seat",{
+    method:"POST",
+    headers:{...headers(),"Content-Type":"application/json"},
+    body:JSON.stringify({professor_id:Number(el("profSelect").value),count:1})
+  });
+  const d = await r.json().catch(()=>({}));
+  if(!r.ok){setMsg(d.detail || "좌석 감소 실패");return;}
+  await loadDashboard();
+}
+
 el("loadBtn").addEventListener("click",loadDashboard);
 el("exportBtn").addEventListener("click",exportCsv);
 el("assignBtn").addEventListener("click",assign);
 el("addSeatBtn").addEventListener("click",addSeat);
+el("removeSeatBtn").addEventListener("click", removeSeat);
 el("randomBtn").addEventListener("click", assignRandom);
 el("resetRandomBtn").addEventListener("click", resetRandom);
 </script>
